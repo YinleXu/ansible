@@ -155,16 +155,16 @@ class GitLabProject(object):
         self._module = module
         self._gitlab = git
 
-    def createOrUpdateProject(self, project_exists, group_name, import_url, arguments):
+    def createOrUpdateProject(self, project_id, group_name, import_url, arguments):
         is_user = False
         group_id = self.getGroupId(group_name)
         if not group_id:
             group_id = self.getUserId(group_name)
             is_user = True
 
-        if project_exists:
+        if project_id:
             # Edit project
-            return self.updateProject(group_name, arguments)
+            return self.updateProject(project_id, arguments)
         else:
             # Create project
             if self._module.check_mode:
@@ -183,7 +183,10 @@ class GitLabProject(object):
 
         return result
 
-    def deleteProject(self, group_name, project_name):
+    def deleteProject(self, project_id):
+        return self._gitlab.deleteproject(project_id)
+
+    def getProjectId(self, group_name, project_name):
         if self.existsGroup(group_name):
             project_owner = group_name
         else:
@@ -192,21 +195,9 @@ class GitLabProject(object):
         search_results = self._gitlab.searchproject(search=project_name)
         for result in search_results:
             owner = result['namespace']['name']
-            if owner == project_owner:
-                return self._gitlab.deleteproject(result['id'])
-
-    def existsProject(self, group_name, project_name):
-        if self.existsGroup(group_name):
-            project_owner = group_name
-        else:
-            project_owner = self._gitlab.currentuser()['username']
-
-        search_results = self._gitlab.searchproject(search=project_name)
-        for result in search_results:
-            owner = result['namespace']['name']
-            if owner == project_owner:
-                return True
-        return False
+            if owner == project_owner and project_name == result['name']:
+                return result['id']
+        return None
 
     def existsGroup(self, group_name):
         if group_name is not None:
@@ -229,18 +220,6 @@ class GitLabProject(object):
                 if group['name'] == group_name:
                     return group['id']
 
-    def getProjectId(self, group_name, project_name):
-        if self.existsGroup(group_name):
-            project_owner = group_name
-        else:
-            project_owner = self._gitlab.currentuser()['username']
-
-        search_results = self._gitlab.searchproject(search=project_name)
-        for result in search_results:
-            owner = result['namespace']['name']
-            if owner == project_owner:
-                return result['id']
-
     def getUserId(self, user_name):
         user_data = self._gitlab.getusers(search=user_name)
 
@@ -255,10 +234,8 @@ class GitLabProject(object):
         else:
             return 0
 
-    def updateProject(self, group_name, arguments):
+    def updateProject(self, project_id, arguments):
         project_changed = False
-        project_name = arguments['name']
-        project_id = self.getProjectId(group_name, project_name)
         project_data = self._gitlab.getproject(project_id=project_id)
 
         for arg_key, arg_value in arguments.items():
@@ -365,7 +342,7 @@ def main():
 
     # Validate if project exists and take action based on "state"
     project = GitLabProject(module, git)
-    project_exists = project.existsProject(group_name, project_name)
+    project_id = project.getProjectId(group_name, project_name)
 
     # Creating the project dict
     arguments = {"name": project_name,
@@ -378,15 +355,16 @@ def main():
                  "public": project.to_bool(public),
                  "visibility_level": int(visibility_level)}
 
-    if project_exists and state == "absent":
-        project.deleteProject(group_name, project_name)
-        module.exit_json(changed=True, result="Successfully deleted project %s" % project_name)
+    if project_id and state == "absent":
+        project.deleteProject(project_id)
+        module.exit_json(changed=True, result="Successfully deleted project {0} in group {1}.".format(project_name, group_name))
     else:
         if state == "absent":
             module.exit_json(changed=False, result="Project deleted or does not exist")
         else:
-            if project.createOrUpdateProject(project_exists, group_name, import_url, arguments):
-                module.exit_json(changed=True, result="Successfully created or updated the project %s" % project_name)
+            if project.createOrUpdateProject(project_id, group_name, import_url, arguments):
+                module.exit_json(changed=True,
+                    result="Successfully created or updated project {0} in group {1}.".format(project_name, group_name))
             else:
                 module.exit_json(changed=False)
 
